@@ -75,10 +75,11 @@ In this notebook, we use MLflow in two ways:
 
 Because the MLflow server is a remote, access-controlled service, you need to provide two pieces of information:
 
-- `MLFLOW_TRACKING_URI`: the URL of the MLflow server (tells your code where to connect).
-- `MLFLOW_RUN_ID`: the identifier of the specific training run whose artefacts (pretrained model) you want to download.
+- `MLFLOW_TRACKING_URI`: the URL of the MLflow server (ex: ``https://projet-funathon-mlflow.user.lab.sspcloud.fr/``).
 - `MLFLOW_TRACKING_USERNAME`
 - `MLFLOW_TRACKING_PASSWORD`
+
+**They are given on the information panel that opens when you launch your MLflow service.**
 
 These values must **not** be hardcoded in the notebook — storing credentials in source code is a security risk.
 
@@ -86,7 +87,6 @@ These values must **not** be hardcoded in the notebook — storing credentials i
 
 ```
 MLFLOW_TRACKING_URI=<add the MLflow server URL>
-MLFLOW_RUN_ID=<add the run ID>
 MLFLOW_TRACKING_USERNAME=<add your username>
 MLFLOW_TRACKING_PASSWORD=<add your password>
 ```
@@ -111,7 +111,7 @@ Import `os` the `load_dotenv` from the `dotenv` package. Then execute `load_dote
 #| code-fold: true
 #| code-summary: Click to see the answer
 #| code-overflow: scroll
-import os
+import mlflow
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -233,6 +233,9 @@ Fit the `LabelEncoder` on the **training set only** — fitting on validation or
 
 ```{python}
 #| label: check-labels
+#| code-fold: true
+#| code-summary: Click to see the answer
+#| code-overflow: scroll
 #| output: true
 all_codes  = set(df['code'])
 train_codes = set(train_df['code'])
@@ -252,10 +255,10 @@ else:
 #| code-overflow: scroll
 #| output: true
 from sklearn.preprocessing import LabelEncoder
+from torchTextClassifiers.value_encoder import ValueEncoder
 
 encoder = LabelEncoder()
 encoder.fit(train_df['code'].to_numpy())
-
 
 value_encoder = ValueEncoder(label_encoder=encoder)
 ```
@@ -312,9 +315,9 @@ Because the vocabulary is learned from your data, it naturally adapts to domain-
 ## Question 1 — Train the tokenizer and inspect a sample
 
 Train a `WordPieceTokenizer` from scratch on the training labels with `vocab_size=5000`
-and `output_dim=125`. Inspect a sample tokenization to understand how the text is split.
+and `output_dim=10`. Inspect a sample tokenization to understand how the text is split.
 
-*Instantiate `WordPieceTokenizer(vocab_size=5000, output_dim=125)` and call `.train(X_train)`. Use `.tokenize()` and `.convert_ids_to_tokens()` to inspect a sample.*
+*Instantiate `WordPieceTokenizer(vocab_size=5000, output_dim=10)` and call `.train(X_train)`. Use `.tokenize()` and `.convert_ids_to_tokens()` to inspect a sample.*
 
 ::: {.callout-warning collapse="true"}
 ## Tokenizer data leakage
@@ -383,13 +386,11 @@ components, and training loop.
 
 Instantiate the classifier from a `ModelConfig` and the trained tokenizer.
 
-*Build a  `ModelConfig` with `embedding_dim`, `num_classes`, and `n_heads_label_attention=4`. Pass both to `torchTextClassifiers(tokenizer=..., model_config=..., value_encoder=...)`.*
+*Build a  `ModelConfig` with `embedding_dim` and `num_classes`. Pass both to `torchTextClassifiers(tokenizer=..., model_config=..., value_encoder=...)`.*
 
 ::: {.callout-note appearance="simple" collapse="true"}
-## Key parameters
+## Key parameter
 - `embedding_dim=96`: size of the dense vector representing each token. Larger values capture more information but are slower to train.
-- about the label attention mechanism, we refer to the [documentation](https://inseefrlab.github.io/torchTextClassifiers/architecture/overview.html#with-label-attention-optional-explainability-layer). Just remember that it is an explainability tool that will be useful later.
-
 :::
 ```{python}
 #| label: model-config
@@ -398,16 +399,12 @@ Instantiate the classifier from a `ModelConfig` and the trained tokenizer.
 #| code-overflow: scroll
 #| output: true
 from torchTextClassifiers import ModelConfig, TrainingConfig, torchTextClassifiers
-from torchTextClassifiers.model.components import AttentionConfig
-from torchTextClassifiers.model.components.text_embedder import LabelAttentionConfig
 
 embedding_dim = 96
 
 model_config = ModelConfig(
     embedding_dim=embedding_dim,
-    num_classes=n_classes,
-    n_heads_label_attention=4,
-    aggregation_method=None)
+    num_classes=n_classes,)
 
 ttc = torchTextClassifiers(
     tokenizer=tokenizer,
@@ -431,29 +428,27 @@ A model trained on the full dataset for many epochs is loaded from MLflow in the
 
 Key hyperparameters used here:
 
-- `lr=1e-3`: a standard starting learning rate for Adam-based optimizers.
-- `batch_size=256`: how many examples are processed before each weight update — larger batches are faster but require more memory.
+- `lr=5e-4`: a standard starting learning rate for Adam-based optimizers.
+- `batch_size=128`: how many examples are processed before each weight update — larger batches are faster but require more memory.
 - `num_epochs=1`: one pass over the data, kept short for this demo.
 :::
 
 ::: {.callout-tip appearance="simple" collapse="true"}
 ## Tip — Logging training with MLflow
 
-Pass an `MLFlowLogger` instance to `TrainingConfig` via `trainer_params` to automatically log metrics (loss, accuracy) to an MLflow experiment:
+Use `mlflow.pytorch.autolog()` and wrap your training call in `mlflow.start_run()` to automatically log metrics (loss, accuracy) to an MLflow experiment:
 
 ```python
-from pytorch_lightning.loggers import MLFlowLogger
+mlflow.set_experiment("my-experiment")
+mlflow.pytorch.autolog()
 
-mlflow_logger = MLFlowLogger(experiment_name="my-experiment")
-training_config = TrainingConfig(
-    ...,
-    trainer_params={"logger": mlflow_logger}
-)
+with mlflow.start_run():
+    ttc.train(...)
 ```
 
-- `experiment_name`: the MLflow experiment that will group your runs. It is created automatically if it does not exist.
-- Each call to `ttc.train(...)` creates a new *run* inside that experiment, so successive training attempts are kept separate and comparable.
-- If `MLFLOW_TRACKING_URI` is set in your environment (e.g. via `.env`), `MLFlowLogger` will forward metrics to that remote server automatically.
+- `mlflow.set_experiment(...)`: sets the active experiment (created automatically if it does not exist).
+- Each call inside `mlflow.start_run()` creates a new *run* inside that experiment, so successive training attempts are kept separate and comparable.
+- If `MLFLOW_TRACKING_URI` is set in your environment (e.g. via `.env`), metrics are forwarded to that remote server automatically.
 :::
 
 ```{python}
@@ -463,117 +458,89 @@ training_config = TrainingConfig(
 #| code-overflow: scroll
 #| output: true
 
-from pytorch_lightning.loggers import MLFlowLogger
-
-mlflow_logger = MLFlowLogger(
-        experiment_name="funathon-project-nlp",
-    )
+mlflow.set_experiment("funathon-2026-project2")
+mlflow.pytorch.autolog()
 
 training_config = TrainingConfig(
     num_epochs=1,
-    batch_size=256,
-    lr=1e-3,
+    batch_size=128,
+    lr=5*1e-4,
     patience_early_stopping=5,
-    trainer_params={"logger": mlflow_logger}
 )
 
-# This should take approximately 2-3mn
-ttc.train(
-    X_train,
-    y_train,
-    training_config=training_config,
-    X_val=X_val,
-    y_val=y_val,
-    verbose=True,
-)
+with mlflow.start_run() as run:
+    # This should take approximately 1-2mn
+    ttc.train(
+        X_train,
+        y_train,
+        training_config=training_config,
+        X_val=X_val,
+        y_val=y_val,
+        verbose=True,
+    )
+
+    mlflow.log_artifacts(
+        training_config.save_path,   # local folder produced by ttc.train()
+        artifact_path="model_artifacts",
+    )
 ```
+
+
+**Loading the model back from MLflow:**
+
+`torchTextClassifiers.load()` reads `model_checkpoint.ckpt`, `tokenizer.pkl`, `value_encoder.pkl`, and the metadata file that were saved by `ttc.save()` — the same files that `ttc.train()` produced.
+
+```{python}
+#| label: load-from-run
+#| code-overflow: scroll
+#| output: true
+local_dir = mlflow.artifacts.download_artifacts(
+    f"runs:/{run.info.run_id}/model_artifacts"
+)
+
+# Rebuild the torchTextClassifiers object from the downloaded files
+ttc_loaded = torchTextClassifiers.load(local_dir)
+
+print(ttc_loaded)
+```
+:::
 
 ## Question 3 — Load the pretrained model from MLflow
 
-Load the **pretrained model** trained on the full dataset from MLflow.
-
-You can see the documentation on MLFlow Python API [here](https://mlflow.org/docs/latest/api_reference/python_api/index.html)
-
-*Use `mlflow.set_tracking_uri()` then `mlflow.artifacts.download_artifacts(f"runs:/{RUN_ID}/model_artifacts")`. Rebuild the model from `model_config.json` and restore weights with `load_state_dict()`.*
-
-<details>
-<summary>Clue here</summary>
-`mlflow.artifacts.download_artifacts` fetches all saved files locally. We rebuild the model
-architecture from `model_config.json` and restore the weights with `load_state_dict`.
-</details>
-
-::: {.callout-note appearance="simple" collapse="true"}
-## Note
-Set `MLFLOW_RUN_ID` in your `.env` file to the right run ID.
-:::
+We provide a **pretrained model** trained on the full dataset.
+Load it as such:
 
 ```{python}
-#| label: load-pretrained
-#| code-fold: true
-#| code-summary: Click to see the answer
+#| label: load-public
 #| code-overflow: scroll
 #| output: true
-import mlflow
-import json
-import torch
-from transformers import PreTrainedTokenizerFast
 
-MLFLOW_TRACKING_URI = os.environ["MLFLOW_TRACKING_URI"]
-RUN_ID = os.environ["MLFLOW_RUN_ID"]
-
-mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-
-artifacts_path = mlflow.artifacts.download_artifacts(f"runs:/{RUN_ID}/model_artifacts")
-
-with open(os.path.join(artifacts_path, "model_config.json")) as f:
-    saved_config = json.load(f)
-
-with open(os.path.join(artifacts_path, "label_mapping.json")) as f:
-    saved_label_mapping = json.load(f)  # {str(int): NACE code}
-
-loaded_tokenizer = WordPieceTokenizer(
-    vocab_size=saved_config["vocab_size"],
-    output_dim=saved_config["output_dim"],
-)
-loaded_tokenizer.tokenizer = PreTrainedTokenizerFast.from_pretrained(
-    os.path.join(artifacts_path, "tokenizer")
-)
-loaded_tokenizer.trained = True
-
-loaded_model_config = ModelConfig(
-    embedding_dim=saved_config["embedding_dim"],
-    num_classes=saved_config["num_classes"],
-    attention_config=AttentionConfig(
-        n_layers=saved_config["n_layers"],
-        n_head=saved_config["n_head"],
-        n_kv_head=saved_config["n_kv_head"],
-        sequence_len=saved_config["output_dim"],
-    ),
-    label_attention_config=LabelAttentionConfig(
-        n_head=saved_config["label_attention_n_head"],
-        num_classes=saved_config["num_classes"],
-    ),
+local_dir = mlflow.artifacts.download_artifacts(
+    artifact_uri="s3://projet-funathon/mlflow-artifacts/2/9a5f1b62a991429492b88575fb108f5c/artifacts/model_artifacts/"
 )
 
-ttc_full = torchTextClassifiers(tokenizer=loaded_tokenizer, model_config=loaded_model_config)
-ttc_full.pytorch_model.load_state_dict(
-    torch.load(os.path.join(artifacts_path, "model_state_dict.pt"), weights_only=True)
-)
-ttc_full.pytorch_model.eval()
+# Rebuild the torchTextClassifiers object from the downloaded files
+ttc = torchTextClassifiers.load(local_dir)
+
+ttc.pytorch_model.eval()
+
 ```
 
-:::
 
 # Prediction and explainability
 
 Once the model is trained, we can use it to predict NACE codes for new text descriptions.
-`torchTextClassifiers` supports **label attention explainability**: the model's internal attention
-matrix links each predicted class to the tokens that contributed most to it, showing which
-words drove the prediction.
+To understand which tokens drove a prediction, we use **captum's `LayerIntegratedGradients`**,
+applied to the model's embedding matrix. This method computes the gradient of the output
+with respect to each input token embedding, integrated along a path from a baseline — attributing
+a score to each token that reflects its contribution to the predicted class.
 
 ::: {.callout-important}
-## On the interpretation of attention attributions
-Attention weights highlight which tokens the model focused on when predicting a class — but attention is **not** a faithful explanation of model decisions in all cases. High attention on a word means the model used it as a signal, not necessarily that it is the true cause of the prediction. Use these visualisations as an exploratory tool, not as a ground-truth explanation.
+## On the interpretation of integrated gradients
+`LayerIntegratedGradients` provides a more faithful attribution than attention weights: it measures
+how much each token embedding actually influenced the model's output, not merely which tokens the
+model attended to. That said, attributions depend on the choice of baseline and should still be
+treated as an exploratory tool rather than a definitive causal explanation.
 :::
 
 ::: {.callout-tip collapse="false" icon=false}
@@ -581,7 +548,7 @@ Attention weights highlight which tokens the model focused on when predicting a 
 
 ## Question 1 — Generate top-3 predictions with confidence scores
 
-Call `ttc_full.predict(np.array(example_texts), top_k=3, explain_with_label_attention=True)`. The result is a dict with keys `prediction` and `confidence` — decode integer predictions back to NACE codes using `saved_label_mapping[str(idx)]`.
+Call `ttc.predict(np.array(example_texts), top_k=3, explain_with_captum=True)`. The result is a dict with keys `prediction`, `confidence` and `captum_attributions` among others.
 
 ```{python}
 #| label: predict-examples
@@ -589,33 +556,29 @@ Call `ttc_full.predict(np.array(example_texts), top_k=3, explain_with_label_atte
 #| code-summary: Click to see the answer
 #| code-overflow: scroll
 #| output: true
-import numpy as np
-
-top_k = 3
-
-example_texts = [
-    "I sell croissants and pains au chocolat in my bakery",
-    "I develop business management software for companies",
-    "I repair cars and carry out technical inspections",
-]
-
-results = ttc_full.predict(np.array(example_texts), top_k=top_k, explain_with_label_attention=True)
-
+import random
+random_indices = random.sample(range(len(X_test)), 3)
+example_texts = X_test[random_indices]
+example_true_codes = y_test[random_indices]
+print(example_texts)
+top_k = 5
+results = ttc.predict(example_texts, top_k=top_k, explain_with_captum=True)
 for i, text in enumerate(example_texts):
-    predicted_codes = [saved_label_mapping[str(results["prediction"][i][k].item())] for k in range(top_k)]
+    predicted_codes = [results["prediction"][i][k] for k in range(top_k)]
     confidence = [results["confidence"][i][k].item() for k in range(top_k)]
     print(f"\nText: {text}")
+    print(f"  True code: {example_true_codes[i]}")
     for code, conf in zip(predicted_codes, confidence):
         print(f"  {code}  (confidence: {conf:.3f})")
 ```
 
 ## Question 2 — Visualise word attributions for the top prediction
 
-Extract `label_attention_attributions` from the results, average over attention heads, then use `map_attributions_to_word()`, `map_attributions_to_char()`, `plot_attributions_at_word()`, and `plot_attributions_at_char()` from `torchTextClassifiers.utilities.plot_explainability`.
+Extract `captum_attributions` from the results, then use `map_attributions_to_word()`, `map_attributions_to_char()`, `plot_attributions_at_word()`, and `plot_attributions_at_char()` from `torchTextClassifiers.utilities.plot_explainability`.
 
 ::: {.callout-note appearance="simple" collapse="true"}
 ## Understanding the result fields
-- `label_attention_attributions`: tensor of shape `(n_head, num_classes, seq_len)` — the attention score each class gave to each token, across all heads.
+- `captum_attributions`: tensor of shape `(n_text, top_k, seq_len)` — attribution scores per token (how much a token has driven a given prediction).
 - `offset_mapping`: character-level start/end positions of each token in the original string, used to map token-level scores back to characters.
 - `word_ids`: maps each token to its parent word index, used to aggregate token scores at the word level.
 :::
@@ -636,12 +599,10 @@ top_k_idx = 0
 text_sample         = example_texts[text_idx]
 offsets             = results["offset_mapping"][text_idx]
 word_ids            = results["word_ids"][text_idx]
-predicted_class_idx = results["prediction"][text_idx][top_k_idx].item()
-predicted_code      = saved_label_mapping[str(predicted_class_idx)]
+predicted_code = results["prediction"][text_idx][top_k_idx]
 
 # Average attention over heads, pick the row for the predicted class
-attn_matrix  = results["label_attention_attributions"][text_idx].detach()  # (n_head, num_classes, seq_len)
-attributions = attn_matrix.mean(dim=0)[predicted_class_idx]                # (seq_len,)
+attributions  = results["captum_attributions"][text_idx][top_k_idx] # (seq_len,)
 
 words, word_attributions = map_attributions_to_word(
     attributions.unsqueeze(0), text_sample, word_ids, offsets
@@ -661,7 +622,7 @@ figshow(plot_attributions_at_word(
 
 ## Question 3 — Evaluate accuracy on the test set
 
-Run `ttc_full.predict(X_test_small, top_k=1)` and compare the predictions against `y_test_small` to compute accuracy.
+Run `ttc(X_test, top_k=1)` and compare the predictions against `y_test` to compute accuracy.
 
 ```{python}
 #| label: evaluate
@@ -669,23 +630,27 @@ Run `ttc_full.predict(X_test_small, top_k=1)` and compare the predictions agains
 #| code-summary: Click to see the answer
 #| code-overflow: scroll
 #| output: true
-TEST_FRAC = 0.05
-X_test_small = X_test[:int(len(X_test) * TEST_FRAC)]
-y_test_small = y_test[:int(len(y_test) * TEST_FRAC)]
-
-results_test = ttc_full.predict(X_test_small, top_k=1)
-
-preds    = results_test["prediction"].squeeze(1).numpy()
-accuracy = (preds == y_test_small).mean()
-print(f"Test accuracy: {accuracy:.4f} ({int(accuracy * len(y_test_small))}/{len(y_test_small)} correct)")
+results_test = ttc.predict(X_test, top_k=1)
+preds    = results_test["prediction"].squeeze(1)
+accuracy = (preds == y_test).mean()
+print(f"Test accuracy: {accuracy:.4f} ({int(accuracy * len(y_test))}/{len(y_test)} correct)")
 ```
-
-<details>
-<summary>Clue here</summary>
-`predict()` returns a dictionary with `prediction` (shape `(N, top_k)`) and `confidence`
-(shape `(N, top_k)`). Use `saved_label_mapping[str(idx)]` to decode integer predictions back
-to NACE code strings. Words highlighted in red contributed positively to the prediction; those
-in blue pulled the model away from it.
-</details>
-
 :::
+
+## Conclusion
+
+Not bad at all! The model reaches strong accuracy on the held-out test set — a genuinely production-ready classifier for NACE 2.1 codes.
+
+In this notebook we learnt how to:
+
+- **Load and explore** a labelled dataset of business activity descriptions mapped to NACE codes.
+- **Split** the data into train, validation, and test sets, and encode the string labels to integers with `LabelEncoder`.
+- **Train a WordPiece tokenizer** from scratch on the training corpus, adapting the subword vocabulary to French domain-specific text.
+- **Configure and train** a neural text classifier end-to-end using `torchTextClassifiers`, with [MLflow](https://mlflow.org/docs/latest/index.html) tracking metrics in real time.
+- **Load a pretrained model** from [MLflow](https://mlflow.org/docs/latest/index.html) artefact storage, so the full-dataset model is available without waiting hours for training.
+- **Interpret predictions** using [Captum](https://captum.ai/docs/introduction)'s Integrated Gradients to visualise which words drove each classification decision.
+- **Evaluate** accuracy on the unseen test set.
+
+---
+
+Ready to go further? Head over to the next notebook — [Introduction to RAG](2-rag-intro.qmd) — where we tackle the same classification problem from a completely different angle: retrieval-augmented generation.
