@@ -714,7 +714,7 @@ print(f"Test accuracy: {accuracy:.4f} ({int(accuracy * len(y_test))}/{len(y_test
 
 ## Conclusion
 
-Not bad at all! The model reaches strong accuracy on the held-out test set — a genuinely production-ready classifier for NACE 2.1 codes.
+Not bad at all! The model reaches strong accuracy on the held-out test set — a genuinely production-ready^[Really? For production purposes, accuracy is not enough: calibration and robustness metrics matter too. Check out [this presentation](https://meilame-tayebjee.github.io/IAOS-Vilnius-conference/presentations/accuracy2trust/#/title-slide) to read more about the metrics to be checked before trusting a model for production.] classifier for NACE 2.1 codes.
 
 In this notebook we learnt how to:
 
