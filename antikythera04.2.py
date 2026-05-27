@@ -115,3 +115,5 @@ for nace_doc in nace_documents:
         client_llmlab,
         EMB_MODEL_NAME,
     )
+
+ 

@@ -1,7 +1,14 @@
+# INTRO
+
+# %%
+# Q1
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# %%
+# Q2
 
 from openai import OpenAI
 
@@ -16,6 +23,10 @@ for model in models.data:
     print(f"ID: {model.id}")
 
 
+
+# %%
+# Q3
+
 from qdrant_client import QdrantClient
 
 client_qdrant = QdrantClient(
@@ -29,6 +40,21 @@ collections = client_qdrant.get_collections()
 for collection in collections.collections:
     print(collection.name)
 
+
+
+
+
+
+
+# Get and process NACE data
+
+
+
+
+
+# %%
+# q1
+
 import duckdb
 con = duckdb.connect(database=":memory:")
 
@@ -41,6 +67,10 @@ table = con.execute(query_definition).to_arrow_table()
 nace = table.to_pylist()
 
 nace[22]
+
+
+# %%
+# Q2
 
 from dataclasses import dataclass, field
 from typing import Optional
@@ -136,12 +166,54 @@ for nace_code in nace:
         )
     )
 
+
+
+# %%
+# Q3
+
+from pprint import pprint
+
+i = 250
+print(f"Printing index {i}:")
+
+print("=============================================")
+print("=============================================")
+
+nace_example = nace[i]
+doc_example = NaceDocument.from_raw(nace_example)
+
+print("\nPrinting text to embed (WITH exclusions):")
+_ = doc_example.to_embedding_text(
+    with_includes_also=True,
+    with_excludes=True,
+)
+print(doc_example.text)
+
+print("=============================================")
+print("=============================================")
+
+print("\nPrinting text to embed (WITHOUT exclusions):")
+_ = doc_example.to_embedding_text(
+    with_includes_also=True,
+    with_excludes=False,
+)
+print(doc_example.text)
+
+
+
+
+# Embed your NACE text descriptions
+
+
+# %%
 EMB_MODEL_NAME = "qwen3-embedding-8b"
 emb_dim = 4096
 
+# %%
+# Q1
 from qdrant_client.models import Distance, VectorParams
 
-COLLECTION_NAME = "nace-collection"
+COLLECTION_NAME = "nace-collection2" #"nace-collection"
 
 # Delete the collection if necessary
 if client_qdrant.collection_exists(collection_name=COLLECTION_NAME):
@@ -155,6 +227,11 @@ client_qdrant.create_collection(
         distance=Distance.COSINE
     )
 )
+
+
+
+# %%
+# Q2
 
 from dataclasses import dataclass, field
 from typing import Optional, List
@@ -255,7 +332,11 @@ class NaceDocument:
         except Exception as e:
             raise RuntimeError(f"Embedding failed for doc {self.code}: {str(e)}")
 
+    
+# %%
+
 # Recreate your NACE documents (that class has been updated)
+
 sample_size = 10
 
 nace_documents = []
@@ -274,6 +355,11 @@ for nace_doc in nace_documents:
         EMB_MODEL_NAME,
     )
 
+
+
+# %%
+# Question 3
+
 print("\nPrinting the first document:")
 print(nace_documents[0])
 
@@ -281,6 +367,10 @@ print("\nPrinting the embedding vector of the first document:")
 print(nace_documents[0].vector)
 
 print(f"\nLength of this vector: {len(nace_documents[0].vector)}")
+
+
+# %%
+# Q4
 
 from dataclasses import dataclass, field
 from typing import Optional, List
@@ -404,6 +494,11 @@ class NaceDocument:
             }
         )
 
+
+
+# %%
+# Q5
+
 nace_points = []
 
 for nace_code in nace:
@@ -421,6 +516,9 @@ for nace_code in nace:
     nace_points.append(
         nace_doc.to_qdrant_point()
     )
+
+
+# %%
 import json
 
 point = nace_points[0]
@@ -432,6 +530,9 @@ point_dict["vector"] = f"[{vector[0]:.4f}, {vector[1]:.4f}, ..., {vector[-1]:.4f
 
 print("Check the first PointStruct:\n")
 print(json.dumps(point_dict, indent=2, ensure_ascii=False))
+
+# %%
+# Q6
 
 from more_itertools import chunked
 from tqdm import tqdm
@@ -449,7 +550,9 @@ for batch in tqdm(batches, desc="Uploading to Qdrant", unit="batch"):
         tqdm.write(f"✗ Batch failed: {e}")
 
 # %%
+# Q7
+
 count = client_qdrant.count(collection_name=COLLECTION_NAME)
 print(count)
-
+# %%
 
