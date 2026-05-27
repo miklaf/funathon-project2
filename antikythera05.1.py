@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# %%
 from openai import OpenAI
 
 client_llmlab = OpenAI(
@@ -16,7 +17,7 @@ client_llmlab = OpenAI(
 # for model in models.data:
 #     print(f"ID: {model.id}")
 
-
+# %%
 from qdrant_client import QdrantClient
 
 client_qdrant = QdrantClient(
@@ -38,13 +39,13 @@ GEN_MODEL_NAME = "gemma4-26b-moe"          # Generative model
 
 # Qdrant
 COLLECTION_NAME = "nace-collection"
-RETRIEVER_LIMIT = 5    # Number of candidates returned by the vector search
+RETRIEVER_LIMIT = 10    # Number of candidates returned by the vector search
 
 # Generation
 TEMPERATURE = 0.1      # Low temperature → more deterministic, reproducible outputs
 
 # Evaluation
-SAMPLE_SIZE = 100       # Number of activities to evaluate (increase for more robust results)
+SAMPLE_SIZE = 1000       # Number of activities to evaluate (increase for more robust results)
 
 
 activity =  "Installation, maintenance and repair of residential air conditioning systems for private customers"
@@ -532,28 +533,3 @@ n_correct = (
     .value_counts()
     .filter(pl.col("pipeline_correct"))["count"][0]
 )
-
-print(n_correct)
-# %%
-print(
-    "\n".join(
-        [
-            "=" * 52,
-            "      DASHBOARD — RAG PIPELINE NACE 2.1",
-            "=" * 52,
-            f"  Activities processed        : {n_total:>6}",
-            f"  Correctly coded             : {n_correct:>6}  ({pipeline_accuracy:.1%})",
-            "",
-            f"  Retriever@{RETRIEVER_LIMIT} accuracy        : {retriever_accuracy:>6.1%}",
-            f"  LLM accuracy (conditional)  : {llm_accuracy:>6.1%}",
-            f"  Pipeline accuracy           : {pipeline_accuracy:>6.1%}",
-            "",
-            f"  Retriever errors            : {n_retriever_miss:>6}  ({n_retriever_miss / n_total:.1%})",
-            f"  LLM errors                  : {n_llm_miss:>6}  ({n_llm_miss / n_total:.1%})",
-            "=" * 52,
-        ]
-    )
-)
-# %%
- 
- 
