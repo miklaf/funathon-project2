@@ -39,7 +39,7 @@ GEN_MODEL_NAME = "gemma4-26b-moe"          # Generative model
 
 # Qdrant
 COLLECTION_NAME = "nace-collection"
-RETRIEVER_LIMIT = 10    # Number of candidates returned by the vector search
+RETRIEVER_LIMIT = 7    # Number of candidates returned by the vector search
 
 # Generation
 TEMPERATURE = 0.1      # Low temperature → more deterministic, reproducible outputs
@@ -48,7 +48,12 @@ TEMPERATURE = 0.1      # Low temperature → more deterministic, reproducible ou
 SAMPLE_SIZE = 1000       # Number of activities to evaluate (increase for more robust results)
 
 
-activity =  "Installation, maintenance and repair of residential air conditioning systems for private customers"
+activity = "swordfish"
+# "σερβίρω ξιφίας"
+# "tuna and swordfish"
+# "τόνοι και ξιφίες"
+# "έχω ένα μικρό οικογενειακό ξενοδοχείο"
+# "Installation, maintenance and repair of residential air conditioning systems for private customers"
 # "people can set their tents in our establishments"
 # "we are a small family hotel"
 # "we have a few rooms that we rent to tourists for some days" 
@@ -81,6 +86,8 @@ print(
 )
 print("Check the first code retrieved ==============\n")
 print(descriptions_retrieved[0])
+print("Check the all code retrieved ==============\n")
+print(descriptions_retrieved)
 
 
 SYSTEM_PROMPT = """\
@@ -383,153 +390,4 @@ from IPython.display import display
 display(p1)
 display(p2)
 
-
-
-# 
-
-
-
 # %%
-import polars as pl
-
-points_df = (
-    pl.DataFrame(points.model_dump())
-    .unnest()
-    .unnest()
-    .select(["id", "score", "code", "text"])
-)
-
-
-# %%
-def run_rag_pipeline(activity: str) -> dict:
-    """
-    Run the full RAG pipeline for a single activity label.
-
-    Parameters
-    ----------
-    activity : str
-        Free-text economic activity label to be coded.
-
-    Returns
-    -------
-    dict with keys:
-        - nace_code (str | None) : predicted NACE code
-        - codable (bool)        : True if the label could be coded
-        - confidence (float)    : confidence score (0–1)
-        - retrieved_codes (list): candidates returned by the retriever
-    """
-    # --- Step 1: Embedding ---
-    emb_response = client_llmlab.embeddings.create(model=EMB_MODEL_NAME, input=activity)
-    embedding = emb_response.data[0].embedding
-
-    # --- Step 2: Retrieval ---
-    points = client_qdrant.query_points(
-        collection_name=COLLECTION_NAME,
-        query=embedding,
-        limit=RETRIEVER_LIMIT,
-    )
-
-    points_df = (
-        pl.DataFrame(points.model_dump(), schema_overrides={"points": pl.Struct})
-        .unnest()
-        .unnest()
-        .select(["id", "score", "code", "text"])
-    )
-
-    # --- Step 3: Prompt construction ---
-    user_prompt = USER_PROMPT_TEMPLATE.format(
-        activity=activity,
-        proposed_nace_descriptions="## " + "\n\n## ".join(points_df["text"]),
-        proposed_nace_codes=", ".join(points_df["code"]),
-    )
-
-    # --- Step 4: LLM inference ---
-    gen_response = client_llmlab.chat.completions.create(
-        model=GEN_MODEL_NAME,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=TEMPERATURE,
-        response_format={"type": "json_object"},
-    )
-
-    result = json.loads(gen_response.choices[0].message.content)
-    # Keep retrieved candidates for retriever evaluation
-    result["retrieved_codes"] = points_df["code"]
-
-    return result
-
-
-annotations_df = pl.DataFrame(annotations)
-
-results_df = annotations_df.with_columns(
-    pl.col("label")
-    .map_elements(
-        lambda a: run_rag_pipeline(a),
-        return_dtype=pl.Struct(
-            {
-                "nace_code": pl.Utf8,
-                "codable": pl.Boolean,
-                "confidence": pl.Float64,
-                "retrieved_codes": pl.List(pl.Utf8),
-            }
-        ),
-    )
-    .alias("pred")
-).unnest()
-
-# Metrics
-results_df = (
-    results_df.with_columns(
-        retriever_hit=pl.col("code").is_in(pl.col("retrieved_codes")),
-        pipeline_correct=pl.col("code") == pl.col("nace_code"),
-    )
-    .with_columns(
-        pipeline_correct=pl.col("pipeline_correct").fill_null(
-            False  # if no prediction - pipeline is false
-        )
-    )
-    .with_columns(
-        llm_correct_given_retriever=pl.when(pl.col("retriever_hit"))
-        .then(pl.col("pipeline_correct"))
-        .otherwise(None),
-    )
-)
-
-# Q1
-results_df["retriever_hit"].value_counts()
-retriever_accuracy = results_df["retriever_hit"].mean()
-
-# Q2
-results_df["llm_correct_given_retriever"].value_counts()
-results_df.filter(pl.col("retriever_hit"))["llm_correct_given_retriever"].value_counts()
-llm_accuracy = results_df.filter(pl.col("retriever_hit"))[
-    "llm_correct_given_retriever"
-].mean()
-
-# Q3
-results_df["pipeline_correct"].value_counts()
-pipeline_accuracy = results_df["pipeline_correct"].mean()
-pipeline_accuracy
-llm_accuracy * retriever_accuracy
-
-# Q4
-n_total = len(results_df)
-
-n_retriever_miss = (
-    results_df["retriever_hit"]
-    .value_counts()
-    .filter(~pl.col("retriever_hit"))["count"][0]
-)
-n_llm_miss = (
-    results_df["llm_correct_given_retriever"]
-    .value_counts()
-    .filter(~pl.col("llm_correct_given_retriever"))["count"][0]
-)
-
-n_correct = (
-    results_df["pipeline_correct"]
-    .value_counts()
-    .filter(pl.col("pipeline_correct"))["count"][0]
-)
